@@ -927,6 +927,8 @@
     <string name="mediaview_converting_fail_btn">Open in web</string>
     <string name="mediaview_save">Save %1$s</string>
     <string name="mediaview_saving">Saving %1$s</string>
+    <string name="mediaview_share">Share %1$s</string>
+    <string name="mediaview_sharing">Sharing %1$s</string>
 
     <!-- Drafts -->
     <string name="draft_saving">Saving draft</string>

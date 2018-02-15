@@ -21,6 +21,8 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.os.Handler;
 import android.support.v4.app.NotificationCompat;
+import android.support.v4.content.ContextCompat;
+import android.support.v4.content.FileProvider;
 import android.support.v4.view.animation.FastOutSlowInInterpolator;
 import android.text.Html;
 import android.util.Log;
@@ -253,8 +255,8 @@ public class MediaView extends FullScreenActivity
                 if (type.equals("GIFV") && new URL(contentUrl).getHost().equals("i.imgur.com")) {
                     type = "GIF";
                     contentUrl = contentUrl.replace(".gifv", ".gif");
-                    //todo possibly share gifs  b.sheet(9, share, "Share GIF");
                 }
+                b.sheet(9, image, getString(R.string.mediaview_share, type));
             } catch (MalformedURLException e) {
                 e.printStackTrace();
             }
@@ -291,7 +293,7 @@ public class MediaView extends FullScreenActivity
                     }
                     break;
                     case (9): {
-                        shareGif(contentUrl);
+                        new ShareGifAsyncTask(contentUrl).executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
                     }
                     break;
                     case (4): {
@@ -319,6 +321,67 @@ public class MediaView extends FullScreenActivity
             }
         } else {
             doOnClick.run();
+        }
+    }
+
+    private class ShareGifAsyncTask extends AsyncTask<Void, Void, File> {
+
+        private String mBaseUrl;
+
+        ShareGifAsyncTask(final String baseUrl) {
+            this.mBaseUrl = baseUrl;
+        }
+
+        @Override
+        protected File doInBackground(Void... params) {
+            File outputDir = getApplicationContext().getExternalCacheDir(); // context being the Activity pointer
+            try {
+                File f = File.createTempFile("gifs", ".gif", outputDir);
+                final URL url = new URL(this.mBaseUrl);
+                URLConnection conn = url.openConnection();
+                conn.setReadTimeout(5000);
+                conn.setConnectTimeout(10000);
+                InputStream is = conn.getInputStream();
+                BufferedInputStream inStream = new BufferedInputStream(is, 1024 * 5);
+                int length = conn.getContentLength();
+                FileOutputStream outStream = new FileOutputStream(f);
+                byte[] buff = new byte[5 * 1024];
+
+                int len;
+                int last = 0;
+                while ((len = inStream.read(buff)) != -1) {
+                    outStream.write(buff, 0, len);
+                    int percent = Math.round(100.0f * f.length() / length);
+                    if (percent > last) {
+                        last = percent;
+                    }
+                    // add support for progress bar in the BottomSheet
+                }
+                outStream.flush();
+                outStream.close();
+                inStream.close();
+                return f;
+            } catch (IOException e) {
+                Toast.makeText(MediaView.this, getString(R.string.err_share_image),
+                        Toast.LENGTH_LONG).show();
+                return null;
+            }
+        }
+
+        @Override
+        protected void onPostExecute(File result) {
+            if (result == null) { return; }
+            Uri uri = FileProvider.getUriForFile(getApplicationContext(), getApplicationContext().getPackageName()+".provider", result);
+            share(uri);
+        }
+
+        private void share(Uri uri) {
+            Intent intent = new Intent(Intent.ACTION_SEND);
+            intent.setType("image/gif");
+            intent.putExtra(Intent.EXTRA_SUBJECT, getString(R.string.misc_img_share));
+            intent.putExtra(Intent.EXTRA_STREAM, uri);
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            getApplicationContext().startActivity(Intent.createChooser(intent, getString(R.string.misc_img_share)));
         }
     }
 
@@ -408,82 +471,6 @@ public class MediaView extends FullScreenActivity
         }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
 
     }
-
-    public void shareGif(final String baseUrl) {
-        new AsyncTask<Void, Void, Void>() {
-            @Override
-            protected Void doInBackground(Void... params) {
-                if (Reddit.appRestart.getString("imagelocation", "").isEmpty()) {
-                    showFirstDialog();
-                } else if (!new File(Reddit.appRestart.getString("imagelocation", "")).exists()) {
-                    showErrorDialog();
-                } else {
-                    final File f = new File(
-                            Reddit.appRestart.getString("imagelocation", "") + File.separator + UUID
-                                    .randomUUID()
-                                    .toString() + baseUrl.substring(baseUrl.lastIndexOf(".")));
-                    mNotifyManager =
-                            (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-                    mBuilder = new NotificationCompat.Builder(MediaView.this);
-                    mBuilder.setContentTitle(getString(R.string.mediaview_saving, baseUrl))
-                            .setChannelId(Reddit.CHANNEL_IMG)
-                            .setSmallIcon(R.drawable.save);
-                    try {
-
-                        final URL url =
-                                new URL(baseUrl); //wont exist on server yet, just load the full version
-                        URLConnection ucon = url.openConnection();
-                        ucon.setReadTimeout(5000);
-                        ucon.setConnectTimeout(10000);
-                        InputStream is = ucon.getInputStream();
-                        BufferedInputStream inStream = new BufferedInputStream(is, 1024 * 5);
-                        int length = ucon.getContentLength();
-                        f.createNewFile();
-                        FileOutputStream outStream = new FileOutputStream(f);
-                        byte[] buff = new byte[5 * 1024];
-
-                        int len;
-                        int last = 0;
-                        while ((len = inStream.read(buff)) != -1) {
-                            outStream.write(buff, 0, len);
-                            int percent = Math.round(100.0f * f.length() / length);
-                            if (percent > last) {
-                                last = percent;
-                                mBuilder.setProgress(length, (int) f.length(), false);
-                                mNotifyManager.notify(1, mBuilder.build());
-                            }
-                        }
-                        outStream.flush();
-                        outStream.close();
-                        inStream.close();
-                        MediaScannerConnection.scanFile(MediaView.this,
-                                new String[]{f.getAbsolutePath()}, null,
-                                new MediaScannerConnection.OnScanCompletedListener() {
-                                    public void onScanCompleted(String path, Uri uri) {
-                                        Intent mediaScanIntent = FileUtil.getFileIntent(f,
-                                                new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE),
-                                                MediaView.this);
-                                        MediaView.this.sendBroadcast(mediaScanIntent);
-
-                                        final Intent shareIntent = new Intent(Intent.ACTION_SEND);
-                                        startActivity(
-                                                Intent.createChooser(shareIntent, "Share GIF"));
-                                        NotificationManager mNotificationManager =
-                                                (NotificationManager) getSystemService(
-                                                        Activity.NOTIFICATION_SERVICE);
-                                        mNotificationManager.cancel(1);
-                                    }
-                                });
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
-                return null;
-            }
-        }.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
-
-    }
-
 
     @Override
     public void onDestroy() {
